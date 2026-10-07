@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Zig port of Asciiquarium 1.1 by Kirk Baucom. Original ASCII art by Joan Stark and others.
+const std = @import("std");
 const art = @import("art.zig");
 const c = @cImport({
     @cDefine("_DEFAULT_SOURCE", "1");
@@ -536,20 +537,20 @@ fn render() void {
         }
     }
     drawNames();
-    _ = c.fflush(c.stdout);
+    _ = c.fflush(null);
 }
 
 pub fn main() void {
     _ = c.setlocale(c.LC_ALL, "");
     if (c.isatty(0) == 0 or c.isatty(1) == 0) {
-        _ = c.fputs("Run asciiquarium-zig in a terminal.\n", c.stderr);
+        std.debug.print("Run asciiquarium-zig in a terminal.\n", .{});
         return;
     }
     seed = @bitCast(@as(i64, @intCast(c.time(null))));
     loadNames();
     terminalSize();
     if (width < 20 or height < 12) {
-        _ = c.fputs("Terminal must be at least 20x12.\n", c.stderr);
+        std.debug.print("Terminal must be at least 20x12.\n", .{});
         return;
     }
     var original: c.struct_termios = undefined;
@@ -562,10 +563,10 @@ pub fn main() void {
     defer {
         _ = c.tcsetattr(0, c.TCSAFLUSH, &original);
         _ = c.printf("\x1b[0m\x1b[?25h\x1b[?1049l");
-        _ = c.fflush(c.stdout);
+        _ = c.fflush(null);
     }
     _ = c.printf("\x1b[?1049h\x1b[?25l\x1b[2J");
-    _ = c.fflush(c.stdout);
+    _ = c.fflush(null);
     resetScene();
     var paused = false;
     while (true) {
