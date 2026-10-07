@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target_name: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target_name: linux-aarch64
+          - os: macos-15
+            target_name: macos-aarch64
+          - os: macos-15-intel
+            target_name: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+      - name: Verify tag matches VERSION
+        shell: bash
+        run: |
+          test "${GITHUB_REF_NAME#v}" = "$(cat VERSION)"
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+      - name: Package
+        shell: bash
+        run: |
+          version="$(cat VERSION)"
+          dir="asciiquarium-zig-${version}-${{ matrix.target_name }}"
+          mkdir "$dir"
+          cp zig-out/bin/asciiquarium-zig "$dir/"
+          cp README.md LICENSE fish.conf "$dir/"
+          tar -czf "$dir.tar.gz" "$dir"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ matrix.target_name }}
+          path: asciiquarium-zig-*.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Build source archive and checksums
+        run: |
+          version="$(cat VERSION)"
+          git archive --format=tar.gz --prefix="asciiquarium-zig-${version}/" -o "dist/asciiquarium-zig-${version}-source.tar.gz" HEAD
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/SHA256SUMS

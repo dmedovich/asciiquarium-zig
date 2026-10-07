@@ -1,0 +1,17 @@
+.{
+    .name = .asciiquarium_zig,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "main.zig",
+        "art.zig",
+        "fish.conf",
+        "README.md",
+        "LICENSE",
+        "VERSION",
+        "upstream",
+        "tools",
+    },
+}
