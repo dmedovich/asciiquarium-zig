@@ -1,0 +1,66 @@
+name: Homebrew
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  homebrew:
+    name: Homebrew (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      TAP: dmedovich/asciiquarium-zig
+      FORMULA: dmedovich/asciiquarium-zig/asciiquarium-zig
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Prepare local tap and source archive
+        shell: bash
+        run: |
+          # Clone the reviewed checkout, including PR changes, rather than remote main.
+          brew tap --custom-remote "$TAP" "$GITHUB_WORKSPACE"
+          tap_dir="$(brew --repository "$TAP")"
+          mkdir -p "$tap_dir/Formula"
+          version="$(cat VERSION)"
+          archive="$RUNNER_TEMP/asciiquarium-zig-${version}-source.tar.gz"
+          git archive --format=tar.gz --prefix="asciiquarium-zig-${version}/" -o "$archive" HEAD
+          python3 tools/generate_formula.py "$archive" --output "$tap_dir/Formula/asciiquarium-zig.rb"
+          # The candidate archive is local; its release URL does not exist yet.
+          python3 - "$tap_dir/Formula/asciiquarium-zig.rb" "$archive" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          formula = Path(sys.argv[1])
+          archive = Path(sys.argv[2])
+          formula.write_text(re.sub(r'^  url ".*"$', f'  url "{archive.as_uri()}"',
+                                    formula.read_text(), flags=re.MULTILINE))
+          PY
+      - name: Install current source through Homebrew
+        run: brew install --build-from-source "$FORMULA"
+      - name: Test current source
+        run: |
+          brew test "$FORMULA"
+          python3 tools/test_terminal.py "$(brew --prefix "$FORMULA")/bin/asciiquarium-zig"
+      - name: Install published formula
+        if: ${{ hashFiles('Formula/asciiquarium-zig.rb') != '' }}
+        run: |
+          brew uninstall "$FORMULA"
+          cp Formula/asciiquarium-zig.rb "$(brew --repository "$TAP")/Formula/asciiquarium-zig.rb"
+          brew install --build-from-source "$FORMULA"
+      - name: Test and audit published formula
+        if: ${{ hashFiles('Formula/asciiquarium-zig.rb') != '' }}
+        run: |
+          brew test "$FORMULA"
+          brew audit --strict "$FORMULA"

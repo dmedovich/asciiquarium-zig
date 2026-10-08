@@ -76,3 +76,21 @@ jobs:
             dist/*.tar.gz
             dist/SHA256SUMS
             dist/asciiquarium-zig.rb
+      - name: Show tap update instructions
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          The release includes a formula with the source archive's SHA-256.
+          From a checkout of the main branch, download it into this repository:
+
+          \`\`\`sh
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern asciiquarium-zig.rb --dir Formula --clobber
+          git add Formula/asciiquarium-zig.rb
+          git commit -m "Update Homebrew formula for $RELEASE_TAG"
+          git push origin main
+          \`\`\`
+
+          The Homebrew workflow checks installation, tests and audit on macOS Intel and Apple Silicon.
+          After the first successful run, remove "(coming soon)" from the README's Homebrew heading.
+          EOF

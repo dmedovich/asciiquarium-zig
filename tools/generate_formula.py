@@ -7,7 +7,8 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('archive', type=Path)
-parser.add_argument('--output', type=Path, required=True)
+parser.add_argument('--output', type=Path, default=root / 'Formula/asciiquarium-zig.rb',
+                    help='Destination (default: Formula/asciiquarium-zig.rb)')
 args = parser.parse_args()
 version = (root / 'VERSION').read_text().strip()
 if not re.fullmatch(r'\d+\.\d+\.\d+', version):

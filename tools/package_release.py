@@ -19,6 +19,7 @@ source_files = [
     "tools/generate_art.py", "tools/package_release.py",
     "tools/generate_formula.py", "tools/test_terminal.py",
     ".github/workflows/ci.yml", ".github/workflows/release.yml",
+    ".github/workflows/homebrew.yml",
     "packaging/homebrew/asciiquarium-zig.rb",
 ]
 

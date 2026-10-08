@@ -7,7 +7,8 @@ A Zig port of [Asciiquarium 1.1](https://robobunny.com/projects/asciiquarium/htm
 ### Homebrew (coming soon)
 
 ```sh
-brew install dmedovich/tap/asciiquarium-zig
+brew tap dmedovich/asciiquarium-zig https://github.com/dmedovich/asciiquarium-zig.git
+brew install dmedovich/asciiquarium-zig/asciiquarium-zig
 ```
 
 Run:
