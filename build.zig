@@ -15,4 +15,8 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
+
+    const tests = b.addTest(.{ .root_module = exe.root_module });
+    const test_step = b.step("test", "Run regression tests");
+    test_step.dependOn(&b.addRunArtifact(tests).step);
 }

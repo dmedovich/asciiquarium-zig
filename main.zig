@@ -12,7 +12,10 @@ const c = @cImport({
     @cInclude("sys/ioctl.h");
     @cInclude("time.h");
     @cInclude("locale.h");
+    @cInclude("signal.h");
 });
+
+extern "c" fn fgets(buffer: [*]u8, count: c_int, stream: *c.FILE) ?[*:0]u8;
 
 const MaxWidth = 320;
 const MaxHeight = 120;
@@ -36,7 +39,7 @@ const Fish = struct {
     hooked: bool = false,
 };
 const Bubble = struct { x: i32 = 0, y: i32 = 0, age: u8 = 0, active: bool = false };
-const Weed = struct { x: i32 = 0, size: i32 = 3, phase: u8 = 0, expires: u32 = 0 };
+const Weed = struct { x: i32 = 0, size: i32 = 3, phase: u8 = 0, remaining: u32 = 0 };
 const Splat = struct { x: i32 = 0, y: i32 = 0, age: u8 = 0, active: bool = false };
 const EventKind = enum(u8) { ship, whale, monster, big_fish, shark, hook, swan, ducks, dolphins };
 const Event = struct {
@@ -95,7 +98,8 @@ fn resolveConfigPath() [*c]const u8 {
 
     const xdg = c.getenv("XDG_CONFIG_HOME");
     if (xdg != null and xdg[0] != 0) {
-        if (c.snprintf(@ptrCast(&config_path), config_path.len, "%s/asciiquarium/fish.conf", xdg) > 0) {
+        const length = c.snprintf(@ptrCast(&config_path), config_path.len, "%s/asciiquarium/fish.conf", xdg);
+        if (length > 0 and length < config_path.len) {
             const candidate: [*c]const u8 = @ptrCast(&config_path);
             if (c.access(candidate, c.R_OK) == 0) return candidate;
         }
@@ -103,7 +107,8 @@ fn resolveConfigPath() [*c]const u8 {
 
     const home = c.getenv("HOME");
     if (home != null and home[0] != 0) {
-        if (c.snprintf(@ptrCast(&config_path), config_path.len, "%s/.config/asciiquarium/fish.conf", home) > 0) {
+        const length = c.snprintf(@ptrCast(&config_path), config_path.len, "%s/.config/asciiquarium/fish.conf", home);
+        if (length > 0 and length < config_path.len) {
             const candidate: [*c]const u8 = @ptrCast(&config_path);
             if (c.access(candidate, c.R_OK) == 0) return candidate;
         }
@@ -117,8 +122,12 @@ fn loadNames() void {
     const file = c.fopen(path, "r");
     if (file == null) return;
     defer _ = c.fclose(file);
+    readNames(file.?);
+}
+
+fn readNames(file: *c.FILE) void {
     var line: [512]u8 = undefined;
-    while (name_count < MaxNames and c.fgets(@ptrCast(&line), @intCast(line.len), file) != null) {
+    while (name_count < MaxNames and fgets(&line, @intCast(line.len), file) != null) {
         const length: usize = @intCast(c.strlen(@ptrCast(&line)));
         if (length == line.len - 1 and line[length - 1] != '\n') {
             var extra: c_int = 0;
@@ -137,11 +146,25 @@ fn loadNames() void {
         for (line[first..last]) |byte| {
             if (byte < 32 or byte == 127) valid = false;
         }
-        if (!valid) continue;
+        if (!valid or !std.unicode.utf8ValidateSlice(line[first..last])) continue;
         for (line[first..last], 0..) |byte, i| names[name_count][i] = byte;
         names[name_count][last - first] = 0;
         name_count += 1;
     }
+}
+
+test "names reject invalid UTF-8 and overlong lines without losing the next name" {
+    const file = c.tmpfile() orelse return error.TemporaryFileFailed;
+    defer _ = c.fclose(file);
+    const input = " # comment\n  Nemo \r\n\xff\n" ++ "x" ** 600 ++ "\nРыбка\n";
+    try std.testing.expectEqual(input.len, c.fwrite(input.ptr, 1, input.len, file));
+    c.rewind(file);
+    name_count = 0;
+    defer name_count = 0;
+    readNames(file);
+    try std.testing.expectEqual(@as(usize, 2), name_count);
+    try std.testing.expectEqualStrings("Nemo", std.mem.sliceTo(&names[0], 0));
+    try std.testing.expectEqualStrings("Рыбка", std.mem.sliceTo(&names[1], 0));
 }
 
 fn terminalSize() void {
@@ -170,7 +193,7 @@ fn rowChar(shape: []const u8, row: i32, column: i32) u8 {
     var y: i32 = 0;
     var x: i32 = 0;
     for (shape) |ch| {
-        if (y == row and x == column) return ch;
+        if (y == row and x == column) return if (ch == '\n') ' ' else ch;
         if (ch == '\n') {
             y += 1;
             x = 0;
@@ -178,6 +201,34 @@ fn rowChar(shape: []const u8, row: i32, column: i32) u8 {
         if (y > row) break;
     }
     return ' ';
+}
+
+test "sprite lookup pads short rows with spaces" {
+    try std.testing.expectEqual(@as(u8, ' '), rowChar("a\nbcd", 0, 1));
+    try std.testing.expectEqual(@as(u8, 'd'), rowChar("a\nbcd", 1, 2));
+    try std.testing.expectEqual(@as(u8, ' '), rowChar("a\nbcd", 2, 0));
+}
+
+test "scene survives frame counter wrap and terminal size limits" {
+    const sizes = [_]Dimensions{ .{ .w = 20, .h = 12 }, .{ .w = MaxWidth, .h = MaxHeight } };
+    for (sizes) |size| {
+        width = size.w;
+        height = size.h;
+        frame = std.math.maxInt(u32) - 2;
+        resetScene();
+        for (0..9) |kind| {
+            event.kind = @enumFromInt(kind);
+            event.age = std.math.maxInt(u32) - 2;
+            for (0..8) |_| {
+                update();
+                clearScreen();
+                drawBackground();
+                drawFish();
+                drawEvent();
+            }
+        }
+        for (weeds[0..weed_count]) |weed| try std.testing.expect(weed.remaining > 0);
+    }
 }
 fn maskColor(mask: u8, fallback: u8, colors: [7]u8) u8 {
     return switch (mask) {
@@ -247,7 +298,7 @@ fn spawnFish(index: usize, initial: bool) void {
     if (initial) fish[index].x = fx(irand(width + size.w) - size.w);
 }
 fn spawnWeed(index: usize) void {
-    weeds[index] = .{ .x = 1 + irand(width - 2), .size = 3 + irand(4), .phase = @intCast(rand(2)), .expires = frame + 4800 + rand(2400) };
+    weeds[index] = .{ .x = 1 + irand(width - 2), .size = 3 + irand(4), .phase = @intCast(rand(2)), .remaining = 4800 + rand(2400) };
 }
 fn eventShape(kind: EventKind, dir: usize, phase: usize) []const u8 {
     return switch (kind) {
@@ -271,7 +322,7 @@ fn spawnEvent() void {
     event.speed = if (dir == 0) 1 else -1;
     event.x = if (dir == 0) fx(-size.w) else fx(width - 2);
     event.y = switch (kind) {
-        .ship => -1, // Keep the hull on the waterline at row 5.
+        .ship => -1,
         .whale => 1,
         .monster => 2,
         .big_fish => fx(9 + irand(height - 24)),
@@ -376,8 +427,9 @@ fn updateEvent() void {
 }
 fn update() void {
     frame +%= 1;
-    for (weeds[0..weed_count], 0..) |weed, i| {
-        if (frame >= weed.expires) spawnWeed(i);
+    for (weeds[0..weed_count], 0..) |*weed, i| {
+        if (weed.remaining > 0) weed.remaining -= 1;
+        if (weed.remaining == 0) spawnWeed(i);
     }
     for (&bubbles) |*bubble| {
         if (!bubble.active) continue;
@@ -434,7 +486,6 @@ fn drawShip(x: i32, y: i32, dir: usize) void {
             last = column;
         }
     }
-    // The hull is hollow ASCII art: cover the wave behind its interior.
     if (last >= first) {
         column = first;
         while (column <= last) : (column += 1) put(x + column, y + hull_row, ' ', 34, 31);
@@ -471,7 +522,7 @@ fn drawEvent() void {
             for (0..3) |i| {
                 const offset: i32 = @intCast(i * 15);
                 const dx = if (event.dir == 0) -offset else offset;
-                const wave = @as(i32, @intCast((event.age + @as(u32, @intCast(i * 12))) % 36));
+                const wave = @as(i32, @intCast((event.age +% @as(u32, @intCast(i * 12))) % 36));
                 const dy = if (wave < 14) -@divTrunc(wave, 2) else if (wave < 16) -7 else if (wave < 30) -7 + @divTrunc(wave - 16, 2) else 0;
                 const color: u8 = if (i == 0) 96 else if (i == 1) 94 else 34;
                 sprite(x + dx, y + dy, eventShape(.dolphins, event.dir, phase + i), art.dolphins[4 + event.dir], color, 32, blank_colors);
@@ -530,7 +581,7 @@ fn render() void {
         while (x < width - 1) : (x += 1) {
             const cell = screen[@as(usize, @intCast(y * MaxWidth + x))];
             if (cell.color != last_color) {
-                _ = c.printf("\x1b[%dm", cell.color);
+                _ = c.printf("\x1b[%dm", @as(c_int, cell.color));
                 last_color = cell.color;
             }
             _ = c.putchar(cell.ch);
@@ -540,26 +591,64 @@ fn render() void {
     _ = c.fflush(null);
 }
 
-pub fn main() void {
+var stop_signal: c.sig_atomic_t = 0;
+
+fn handleSignal(sig: c_int) callconv(.c) void {
+    const flag: *volatile c.sig_atomic_t = &stop_signal;
+    flag.* = sig;
+}
+
+const version = std.mem.trim(u8, @embedFile("VERSION"), " \r\n\t");
+
+pub fn main(init: std.process.Init.Minimal) u8 {
+    var args = init.args.iterate();
+    _ = args.next();
+    if (args.next()) |arg| {
+        if (args.next() != null) {
+            std.debug.print("Expected at most one option.\n", .{});
+            return 1;
+        }
+        if (std.mem.eql(u8, arg, "--version")) {
+            _ = c.puts("asciiquarium-zig " ++ version);
+            return 0;
+        }
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) {
+            _ = c.puts("Usage: asciiquarium-zig [--help|--version]\nControls: q/Ctrl+C quit, p pause, r reload fish names.");
+            return 0;
+        }
+        std.debug.print("Unknown option: {s}\n", .{arg});
+        return 1;
+    }
     _ = c.setlocale(c.LC_ALL, "");
     if (c.isatty(0) == 0 or c.isatty(1) == 0) {
         std.debug.print("Run asciiquarium-zig in a terminal.\n", .{});
-        return;
+        return 1;
     }
     seed = @bitCast(@as(i64, @intCast(c.time(null))));
     loadNames();
     terminalSize();
     if (width < 20 or height < 12) {
         std.debug.print("Terminal must be at least 20x12.\n", .{});
-        return;
+        return 1;
     }
+
+    const signal_error = std.math.maxInt(usize);
+    const old_int = c.signal(c.SIGINT, handleSignal);
+    if (@intFromPtr(old_int) == signal_error) return 1;
+    defer _ = c.signal(c.SIGINT, old_int);
+    const old_term = c.signal(c.SIGTERM, handleSignal);
+    if (@intFromPtr(old_term) == signal_error) return 1;
+    defer _ = c.signal(c.SIGTERM, old_term);
+    const old_hup = c.signal(c.SIGHUP, handleSignal);
+    if (@intFromPtr(old_hup) == signal_error) return 1;
+    defer _ = c.signal(c.SIGHUP, old_hup);
     var original: c.struct_termios = undefined;
-    if (c.tcgetattr(0, &original) != 0) return;
+    if (c.tcgetattr(0, &original) != 0) return 1;
     var raw = original;
     c.cfmakeraw(&raw);
     raw.c_cc[c.VMIN] = 0;
     raw.c_cc[c.VTIME] = 0;
-    if (c.tcsetattr(0, c.TCSAFLUSH, &raw) != 0) return;
+    if (c.tcsetattr(0, c.TCSAFLUSH, &raw) != 0) return 1;
     defer {
         _ = c.tcsetattr(0, c.TCSAFLUSH, &original);
         _ = c.printf("\x1b[0m\x1b[?25h\x1b[?1049l");
@@ -569,7 +658,8 @@ pub fn main() void {
     _ = c.fflush(null);
     resetScene();
     var paused = false;
-    while (true) {
+    const signal_flag: *volatile c.sig_atomic_t = &stop_signal;
+    while (signal_flag.* == 0) {
         var key: u8 = 0;
         const count = c.read(0, &key, 1);
         if (count == 1) switch (key) {
@@ -596,4 +686,5 @@ pub fn main() void {
         }
         _ = c.usleep(100000);
     }
+    return if (signal_flag.* == 0) 0 else @intCast(128 + signal_flag.*);
 }

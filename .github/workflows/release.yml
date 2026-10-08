@@ -27,13 +27,17 @@ jobs:
       - uses: actions/checkout@v6
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.15.2
+          version: 0.16.0
       - name: Verify tag matches VERSION
         shell: bash
         run: |
           test "${GITHUB_REF_NAME#v}" = "$(cat VERSION)"
+      - name: Test
+        run: zig build test
       - name: Build
         run: zig build -Doptimize=ReleaseSafe
+      - name: Test terminal
+        run: python3 tools/test_terminal.py
       - name: Package
         shell: bash
         run: |
@@ -63,9 +67,12 @@ jobs:
           git archive --format=tar.gz --prefix="asciiquarium-zig-${version}/" -o "dist/asciiquarium-zig-${version}-source.tar.gz" HEAD
           cd dist
           sha256sum *.tar.gz > SHA256SUMS
+      - name: Generate Homebrew formula
+        run: python3 tools/generate_formula.py "dist/asciiquarium-zig-$(cat VERSION)-source.tar.gz" --output dist/asciiquarium-zig.rb
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
             dist/*.tar.gz
             dist/SHA256SUMS
+            dist/asciiquarium-zig.rb

@@ -1,8 +1,8 @@
 .{
     .name = .asciiquarium_zig,
     .fingerprint = 0xa3b1fb710e2e57a7,
-    .version = "0.1.0",
-    .minimum_zig_version = "0.15.2",
+    .version = "0.1.2",
+    .minimum_zig_version = "0.16.0",
     .paths = .{
         "build.zig",
         "build.zig.zon",
